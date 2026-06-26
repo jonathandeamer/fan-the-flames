@@ -48,7 +48,8 @@ is unchanged.
   reallocated on resize.
 - `step_fire(state)` — advances the simulation one frame.
 - `render_fire(state, rows, cols)` — heat grid → truecolor half-block string,
-  with the banner overlaid at the cell level (see Rendering).
+  with the `[q]uit` footer overlaid at the cell level (see Rendering). No title
+  banner.
 - `FG_PALETTE` / `BG_PALETTE` — 256 precomputed truecolor escape strings each
   (`38;2;…m` foreground and `48;2;…m` background) over the same black→red→
   orange→yellow→white RGB ramp, so both halves of a cell color without per-cell
@@ -83,13 +84,14 @@ Doom-style heat-field over a `cols × H` byte grid (`H = rows * 2`).
   background indices independently, and emit an `FG_PALETTE` / `BG_PALETTE`
   escape only when its index changes from the previous cell. Primary lever for
   keeping the Pi Zero within framerate (cuts both CPU and bytes).
-- **Banner:** overlay the banner **into the cell grid before escape generation**,
-  not by string-slicing rendered rows. The existing `overlay_banner` slices by
-  character index and injects `END`/`WATER`, which would miscount ANSI escape
-  bytes as columns on truecolor rows; it is rewritten to mark banner cells
-  (fixed glyph + fixed fg/bg) in the per-cell render path. Stays centered,
-  auto-skips when the window is too small, carries the **Fan the Flames** text,
-  and keeps the `[q]uit` footer.
+- **No title banner:** the fire fills the whole screen. (The old wave version
+  centered a `MOZZ.US / Ride the Wave` banner; we drop the title entirely.)
+- **Footer only:** a small `[q]uit` hint is overlaid **into the cell grid before
+  escape generation**, not by string-slicing rendered rows (which would miscount
+  ANSI escape bytes as columns on truecolor rows). It is marked as fixed
+  glyph + fixed fg/bg in the per-cell render path, placed at the bottom edge, and
+  auto-skipped when the window is too narrow for it. The old `overlay_banner`
+  string-slicing helper is removed.
 
 ### Performance risk & mitigation
 
@@ -112,8 +114,8 @@ ideas in Python (algorithms aren't copyrightable), so attribution is courtesy.
   describe the fire change, and credit `lavat` (MIT, link) for the rendering
   technique.
 - Remove the Joan Stark ASCII-wave art credit (wave art is removed).
-- Rename project to `fan-the-flames`; rebrand the banner away from mozz.us
-  identity to **Fan the Flames**.
+- Rename project to `fan-the-flames`; drop the mozz.us banner entirely (no title
+  is overlaid). Branding lives in the README and module header only.
 - Remote rewiring (`origin` → author's fork, add `upstream`) is deferred until
   the GitHub fork exists. Build locally first.
 

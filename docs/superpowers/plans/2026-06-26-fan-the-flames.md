@@ -4,7 +4,7 @@
 
 **Goal:** Replace the scrolling ASCII wave in the `ride-the-wave` telnet splash screen with a Doom-style truecolor fire animation, rebranded as "Fan the Flames".
 
-**Architecture:** Reuse the existing telnetlib3 + asyncio server wholesale. Replace only the rendering core: a per-connection heat-field simulation (`FireState` + `step_fire`) feeding a half-block truecolor renderer (`render_fire`) backed by two precomputed gradient palettes. The banner is overlaid at the cell level before escape generation. All new code lives in `telnet_server.py` per the spec's single-file constraint; pure functions are unit-tested.
+**Architecture:** Reuse the existing telnetlib3 + asyncio server wholesale. Replace only the rendering core: a per-connection heat-field simulation (`FireState` + `step_fire`) feeding a half-block truecolor renderer (`render_fire`) backed by two precomputed gradient palettes. A small `[q]uit` footer is overlaid at the cell level before escape generation; there is no title banner. All new code lives in `telnet_server.py` per the spec's single-file constraint; pure functions are unit-tested.
 
 **Tech Stack:** Python 3.11+, telnetlib3, pytest (dev), black/isort/flake8/mypy.
 
@@ -16,7 +16,7 @@
 - **Style:** black line-length 100; isort profile black; flake8 per `setup.cfg`.
 - **Commits:** Conventional Commits. **Never** add AI trailers, co-author credits, or AI git identities.
 - **Truecolor only:** emit 24-bit escapes (`\x1b[38;2;r;g;bm` / `\x1b[48;2;r;g;bm`) and the `▀` half-block glyph. Target client is Ghostty.
-- **Banner text:** "FAN THE FLAMES". No mozz.us identity. No Joan Stark credit (wave art removed).
+- **No title banner:** the fire fills the screen; only a small `[q]uit` footer is overlaid. No mozz.us identity. No Joan Stark credit (wave art removed).
 
 ---
 
@@ -270,7 +270,7 @@ git commit -m "feat: add doom-style fire simulation"
 
 ---
 
-### Task 4: Half-block renderer & banner overlay
+### Task 4: Half-block renderer & footer overlay
 
 **Files:**
 - Modify: `telnet_server.py`
@@ -279,9 +279,8 @@ git commit -m "feat: add doom-style fire simulation"
 **Interfaces:**
 - Consumes: `FireState`, `step_fire`, `FG_PALETTE`, `BG_PALETTE`.
 - Produces:
-  - `BANNER: list[str]` — equal-width rows spelling "FAN THE FLAMES".
-  - `build_overlay(rows: int, cols: int) -> dict[tuple[int, int], str]` — maps `(term_row, col) -> glyph` for banner + `[q]uit` footer cells; empty banner cells (spaces) are omitted; banner skipped entirely when the window is smaller than the banner.
-  - `render_fire(state: FireState, rows: int, cols: int) -> str` — full frame string: cursor reset, half-block cells with run-length color, banner overlaid, trailing reset.
+  - `build_overlay(rows: int, cols: int) -> dict[tuple[int, int], str]` — maps `(term_row, col) -> glyph` for the `[q]uit` footer cells only; footer skipped when the window is too narrow for it. No title banner.
+  - `render_fire(state: FireState, rows: int, cols: int) -> str` — full frame string: cursor reset, half-block cells with run-length color, footer overlaid, trailing reset.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -292,20 +291,16 @@ import random
 from telnet_server import FireState, build_overlay, render_fire, step_fire
 
 
-def test_overlay_centers_banner_when_room():
+def test_overlay_places_footer_on_bottom_row():
     overlay = build_overlay(rows=24, cols=80)
-    glyphs = "".join(sorted(set(overlay.values())))
-    # banner letters present
-    for ch in "FANTHEL":
-        assert ch in glyphs
-    # footer present
     assert "q" in overlay.values()
+    # every overlaid cell sits on the bottom row
+    assert all(r == 23 for (r, _c) in overlay)
 
 
-def test_overlay_skips_banner_when_too_small():
-    overlay = build_overlay(rows=2, cols=5)
-    # No banner letters fit; must not raise and must not place banner rows.
-    assert all(r < 2 for (r, _c) in overlay)
+def test_overlay_skips_footer_when_too_narrow():
+    overlay = build_overlay(rows=24, cols=4)  # narrower than "[q]uit"
+    assert overlay == {}
 
 
 def test_render_all_cold_is_black_and_well_formed():
@@ -318,12 +313,13 @@ def test_render_all_cold_is_black_and_well_formed():
     assert frame.endswith("\x1b[0m")            # reset at end
 
 
-def test_render_includes_banner_glyphs():
+def test_render_has_no_title_banner():
     random.seed(0)
     state = FireState(cols=80, rows=24)
     step_fire(state, cooling=18)
     frame = render_fire(state, rows=24, cols=80)
-    assert "FAN" in frame or "F" in frame  # banner text rendered into the frame
+    assert "FAN THE FLAMES" not in frame
+    assert "[q]uit" in frame  # footer still present
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -336,34 +332,16 @@ Expected: FAIL with `ImportError: cannot import name 'build_overlay'`.
 Add to `telnet_server.py`:
 ```python
 HALF_BLOCK = "▀"  # upper half block: fg paints top pixel, bg paints bottom
-BANNER_FG = "\x1b[1m\x1b[38;2;255;255;255m"  # bold white
-BANNER_BG = "\x1b[48;2;0;0;0m"  # black
+FOOTER_FG = "\x1b[1m\x1b[38;2;255;255;255m"  # bold white
+FOOTER_BG = "\x1b[48;2;0;0;0m"  # black
 FOOTER = "[q]uit"
-
-BANNER = [
-    "                   ",
-    "   F A N   T H E   ",
-    "    F L A M E S    ",
-    "  ---------------  ",
-    "                   ",
-]
 
 
 def build_overlay(rows: int, cols: int) -> dict[tuple[int, int], str]:
-    """Map (row, col) -> glyph for banner and footer cells overlaid on the fire."""
+    """Map (row, col) -> glyph for the footer cells overlaid on the fire."""
     cells: dict[tuple[int, int], str] = {}
 
-    banner_h = len(BANNER)
-    banner_w = len(BANNER[0])
-    if rows >= banner_h and cols >= banner_w:
-        top = (rows - banner_h) // 2
-        left = (cols - banner_w) // 2
-        for i, line in enumerate(BANNER):
-            for j, ch in enumerate(line):
-                if ch != " ":
-                    cells[(top + i, left + j)] = ch
-
-    if rows >= 1 and cols > len(FOOTER):
+    if rows >= 1 and cols >= len(FOOTER):
         r = rows - 1
         start = cols - len(FOOTER)
         for j, ch in enumerate(FOOTER):
@@ -373,7 +351,7 @@ def build_overlay(rows: int, cols: int) -> dict[tuple[int, int], str]:
 
 
 def render_fire(state: FireState, rows: int, cols: int) -> str:
-    """Render one frame: half-block truecolor cells with the banner overlaid."""
+    """Render one frame: half-block truecolor cells with the footer overlaid."""
     heat = state.heat
     grid_cols = state.cols
     height = state.height
@@ -387,8 +365,8 @@ def render_fire(state: FireState, rows: int, cols: int) -> str:
         for x in range(cols):
             glyph = overlay.get((r, x))
             if glyph is not None:
-                out.append(BANNER_FG + BANNER_BG + glyph)
-                last_fg = last_bg = None  # banner broke the color run
+                out.append(FOOTER_FG + FOOTER_BG + glyph)
+                last_fg = last_bg = None  # footer broke the color run
                 continue
 
             if x < grid_cols:
@@ -422,7 +400,7 @@ Expected: PASS (4 passed).
 
 ```bash
 git add telnet_server.py tests/test_render.py
-git commit -m "feat: add half-block fire renderer with banner overlay"
+git commit -m "feat: add half-block fire renderer with quit footer"
 ```
 
 ---
@@ -539,7 +517,7 @@ Run the server and connect:
 python3 telnet_server.py --port 7777 &
 telnet 127.0.0.1 7777
 ```
-Expected: a fire animation with the "FAN THE FLAMES" banner; pressing `q` disconnects; resizing the window reflows. Kill the server when done: `kill %1`.
+Expected: a full-screen fire animation with a `[q]uit` hint in the bottom-right; pressing `q` disconnects; resizing the window reflows. Kill the server when done: `kill %1`.
 
 - [ ] **Step 8: Commit**
 
@@ -690,7 +668,7 @@ git commit -m "docs: rebrand to Fan the Flames and record fork licensing"
 - `FireState` + `step_fire` (source row, upward propagation, drift, edge=0, resize) → Task 3 + Task 5 (resize in `shell`). ✓
 - `FG_PALETTE`/`BG_PALETTE` precomputed RGB ramp → Task 2. ✓
 - Half-blocks + run-length fg/bg optimization → Task 4. ✓
-- Cell-level banner overlay (not string-slicing), centered, auto-skip when small, footer → Task 4. ✓
+- No title banner; cell-level `[q]uit` footer overlay (not string-slicing), auto-skip when too narrow → Task 4. ✓
 - Performance: run-length optimization implemented; manual smoke in Task 5 Step 7 (Pi Zero fps validated at execution time). ✓
 - Licensing/fork workstream (LICENSE kept, header modification notice, README fork+credits, remove Joan Stark, rebrand) → Task 6. ✓
 - Out of scope (SSH, multi-palette) → not planned. ✓
