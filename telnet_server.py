@@ -22,20 +22,12 @@ import argparse
 import asyncio
 import logging
 import random
-from functools import lru_cache
 
 from telnetlib3 import create_server, telopt
 
 # VT-100 terminal commands
 END = "\x1b[0m"
 CLEAR = "\x1b[2J"
-BOLD = "\x1b[1m"
-RED = "\x1b[1;31m"
-GREEN = "\x1b[22;32m"
-YELLOW = "\x1b[1;33m"
-MAGENTA = "\x1b[1;35m"
-HIDE_CURSOR = "\x1b[25l"
-WATER = "\x1b[46m\x1b[1;37m"  # white w/ cyan background
 RESET = "\x1b[0;0H"  # move cursor to (0, 0) coordinates
 
 # Fire color ramp: (heat_index, (r, g, b)) control stops, black -> white.
@@ -160,29 +152,7 @@ def render_fire(state: FireState, rows: int, cols: int) -> str:
 
 FPS = 10
 DURATION = 10
-
-WAVE = [
-    "'^^'-.__.-" * 30,
-    "^^'-.__.-'" * 30,
-    "^'-.__.-'^" * 30,
-    "'-.__.-'^^" * 30,
-    "-.__.-'^^'" * 30,
-    ".__.-'^^'-" * 30,
-    "__.-'^^'-." * 30,
-    "_.-'^^'-._" * 30,
-    ".-'^^'-.__" * 30,
-    "-'^^'-.__." * 30,
-]
-
-BANNER = [
-    "                 ",
-    BOLD + "  M O Z Z . U S  " + END,
-    "  -------------  ",
-    "^color" + "  Ride the Wave  " + END,
-    "                 ",
-]
-BANNER_ROWS = len(BANNER)
-BANNER_COLS = len(BANNER[0])
+COOLING = 18
 
 
 def parse_args():
@@ -194,6 +164,7 @@ def parse_args():
     parser.add_argument("--port", default=7777, type=int)
     parser.add_argument("--fps", default=FPS, type=float)
     parser.add_argument("--duration", default=DURATION, type=float)
+    parser.add_argument("--cooling", default=COOLING, type=int)
     return parser.parse_args()
 
 
@@ -222,60 +193,21 @@ async def negotiate_telnet_options(writer):
     await asyncio.sleep(0.5)
 
 
-@lru_cache(maxsize=200)
-def render_screen(rows, cols, offset):
-    """
-    Render a frame of the animation screen.
-
-    This method is cached because if the client doesn't resize their window,
-    the animation will be repeated every len(WAVE) frames.
-    """
-    # Fill in the background with the wave pattern
-    lines = [WAVE[(i + offset) % len(WAVE)][:cols] for i in range(rows)]
-
-    # Overlay the banner on top of the background
-    overlay_banner(rows, cols, lines)
-
-    # Add the footer - author's sig and instructions
-    if len(lines[-1]) > 9:
-        lines[-1] = "jgs" + lines[-1][3:-6] + "[q]uit"
-
-    return RESET + WATER + "\r\n".join(lines) + END
-
-
-def overlay_banner(rows, cols, lines):
-    """
-    Overlay the banner text on top of the background pattern.
-    """
-    if rows < BANNER_ROWS or cols < BANNER_COLS:
-        return lines
-
-    start_row = (rows - BANNER_ROWS) // 2
-    start = (cols - BANNER_COLS) // 2
-    end = start + BANNER_COLS
-    for i, line in enumerate(BANNER):
-        row = start_row + i
-        lines[row] = lines[row][:start] + END + line + WATER + lines[row][end:]
-
-
 async def shell(reader, writer):
     """
     A coroutine that's invoked after a new connection has been established.
     """
     await negotiate_telnet_options(writer)
 
-    for frame in range(int(DURATION * FPS)):
+    writer.write(CLEAR)
+    state = None
+    for _frame in range(int(DURATION * FPS)):
         rows, cols = get_terminal_size(writer)
+        if state is None or state.rows != rows or state.cols != cols:
+            state = FireState(cols, rows)
 
-        offset = frame % len(WAVE)
-        text = render_screen(rows, cols, offset)
-
-        # The color cycles once every 7 frames. Add this after render_screen()
-        # so we can cache everything else on the screen.
-        subtitle_color = [MAGENTA, GREEN, RED, YELLOW][(frame // 7) % 4]
-        text = text.replace("^color", subtitle_color, 1)
-
-        writer.write(text)
+        step_fire(state, COOLING)
+        writer.write(render_fire(state, rows, cols))
         await writer.drain()
 
         try:
@@ -304,6 +236,10 @@ def main():
     global DURATION
     DURATION = args.duration
     logging.info(f"Duration {DURATION} seconds")
+
+    global COOLING
+    COOLING = args.cooling
+    logging.info(f"Cooling {COOLING}")
 
     async def shell_wrapper(*arguments):
         try:
