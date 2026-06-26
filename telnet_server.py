@@ -95,6 +95,69 @@ def step_fire(state: FireState, cooling: int, rng=random) -> None:
             heat[row + x] = value if value > 0 else 0
 
 
+HALF_BLOCK = "▀"  # upper half block: fg paints top pixel, bg paints bottom
+FOOTER_FG = "\x1b[1m\x1b[38;2;255;255;255m"  # bold white
+FOOTER_BG = "\x1b[48;2;0;0;0m"  # black
+FOOTER = "[q]uit"
+
+
+def build_overlay(rows: int, cols: int) -> dict[tuple[int, int], str]:
+    """Map (row, col) -> glyph for the footer cells overlaid on the fire."""
+    cells: dict[tuple[int, int], str] = {}
+
+    if rows >= 1 and cols >= len(FOOTER):
+        r = rows - 1
+        start = cols - len(FOOTER)
+        for j, ch in enumerate(FOOTER):
+            cells[(r, start + j)] = ch
+
+    return cells
+
+
+def render_fire(state: FireState, rows: int, cols: int) -> str:
+    """Render one frame: half-block truecolor cells with the footer overlaid."""
+    heat = state.heat
+    grid_cols = state.cols
+    height = state.height
+    overlay = build_overlay(rows, cols)
+
+    out = [RESET]
+    for r in range(rows):
+        last_fg = last_bg = None
+        in_footer = False
+        upper = 2 * r
+        lower = 2 * r + 1
+        for x in range(cols):
+            glyph = overlay.get((r, x))
+            if glyph is not None:
+                if not in_footer:
+                    out.append(FOOTER_FG + FOOTER_BG)
+                    in_footer = True
+                    last_fg = last_bg = None  # footer broke the color run
+                out.append(glyph)
+                continue
+            in_footer = False
+
+            if x < grid_cols:
+                u = heat[upper * grid_cols + x] if upper < height else 0
+                l = heat[lower * grid_cols + x] if lower < height else 0
+            else:
+                u = l = 0
+
+            if u != last_fg:
+                out.append(FG_PALETTE[u])
+                last_fg = u
+            if l != last_bg:
+                out.append(BG_PALETTE[l])
+                last_bg = l
+            out.append(HALF_BLOCK)
+
+        if r < rows - 1:
+            out.append("\r\n")
+    out.append(END)
+    return "".join(out)
+
+
 FPS = 10
 DURATION = 10
 
