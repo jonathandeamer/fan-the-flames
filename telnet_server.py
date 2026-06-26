@@ -37,6 +37,30 @@ HIDE_CURSOR = "\x1b[25l"
 WATER = "\x1b[46m\x1b[1;37m"  # white w/ cyan background
 RESET = "\x1b[0;0H"  # move cursor to (0, 0) coordinates
 
+# Fire color ramp: (heat_index, (r, g, b)) control stops, black -> white.
+_FIRE_STOPS = [
+    (0, (0, 0, 0)),
+    (64, (128, 0, 0)),
+    (128, (255, 0, 0)),
+    (192, (255, 128, 0)),
+    (224, (255, 255, 0)),
+    (255, (255, 255, 255)),
+]
+
+
+def fire_rgb(heat: int) -> tuple[int, int, int]:
+    """Map a heat value (0-255) onto the fire color ramp."""
+    heat = max(0, min(255, heat))
+    for (p0, c0), (p1, c1) in zip(_FIRE_STOPS, _FIRE_STOPS[1:]):
+        if p0 <= heat <= p1:
+            t = (heat - p0) / (p1 - p0)
+            return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1))
+    return _FIRE_STOPS[-1][1]
+
+
+FG_PALETTE = [f"\x1b[38;2;{r};{g};{b}m" for r, g, b in (fire_rgb(h) for h in range(256))]
+BG_PALETTE = [f"\x1b[48;2;{r};{g};{b}m" for r, g, b in (fire_rgb(h) for h in range(256))]
+
 FPS = 10
 DURATION = 10
 
