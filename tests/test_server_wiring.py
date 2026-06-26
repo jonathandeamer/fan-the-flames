@@ -1,8 +1,22 @@
+import asyncio
 import random
 import sys
 from unittest import mock
 
+import telnet_server
 from telnet_server import FireState, parse_args, render_fire, step_fire
+
+
+class _FakeWriter:
+    def __init__(self):
+        self.writes = []
+        self.closed = False
+
+    def write(self, data):
+        self.writes.append(data)
+
+    def close(self):
+        self.closed = True
 
 
 def test_parse_args_has_cooling_default():
@@ -28,7 +42,23 @@ def test_end_to_end_frame_render():
 
 
 def test_wave_symbols_are_gone():
-    import telnet_server
-
     assert not hasattr(telnet_server, "WAVE")
     assert not hasattr(telnet_server, "render_screen")
+
+
+def test_shell_hides_cursor_then_restores_it():
+    async def _noop(writer):
+        return
+
+    writer = _FakeWriter()
+    with mock.patch.object(telnet_server, "negotiate_telnet_options", _noop), mock.patch.object(
+        telnet_server, "DURATION", 0
+    ):
+        asyncio.run(telnet_server.shell(reader=None, writer=writer))
+
+    output = "".join(writer.writes)
+    assert telnet_server.HIDE_CURSOR in output
+    assert telnet_server.SHOW_CURSOR in output
+    # cursor is restored only after it was hidden, and the connection is closed
+    assert output.index(telnet_server.HIDE_CURSOR) < output.index(telnet_server.SHOW_CURSOR)
+    assert writer.closed

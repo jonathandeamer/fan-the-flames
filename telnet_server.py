@@ -35,6 +35,8 @@ from telnetlib3 import create_server, telopt
 END = "\x1b[0m"
 CLEAR = "\x1b[2J"
 RESET = "\x1b[0;0H"  # move cursor to (0, 0) coordinates
+HIDE_CURSOR = "\x1b[?25l"
+SHOW_CURSOR = "\x1b[?25h"
 
 # Fire color ramp: (heat_index, (r, g, b)) control stops, black -> white.
 _FIRE_STOPS = [
@@ -206,25 +208,28 @@ async def shell(reader, writer):
     """
     await negotiate_telnet_options(writer)
 
-    writer.write(CLEAR)
-    state = None
-    for _frame in range(int(DURATION * FPS)):
-        rows, cols = get_terminal_size(writer)
-        if state is None or state.rows != rows or state.cols != cols:
-            state = FireState(cols, rows)
+    writer.write(CLEAR + HIDE_CURSOR)
+    try:
+        state = None
+        for _frame in range(int(DURATION * FPS)):
+            rows, cols = get_terminal_size(writer)
+            if state is None or state.rows != rows or state.cols != cols:
+                state = FireState(cols, rows)
 
-        step_fire(state, COOLING)
-        writer.write(render_fire(state, rows, cols))
-        await writer.drain()
+            step_fire(state, COOLING)
+            writer.write(render_fire(state, rows, cols))
+            await writer.drain()
 
-        try:
-            char = await asyncio.wait_for(reader.read(1), timeout=1 / FPS)
-            if char == "q":
-                break
-        except asyncio.TimeoutError:
-            pass
-
-    writer.close()
+            try:
+                char = await asyncio.wait_for(reader.read(1), timeout=1 / FPS)
+                if char == "q":
+                    break
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        # Restore the client's cursor even if they drop the connection mid-frame.
+        writer.write(SHOW_CURSOR)
+        writer.close()
 
 
 def main():
@@ -259,9 +264,7 @@ def main():
             pass
 
     async def serve():
-        server = await create_server(
-            host=args.host, port=args.port, shell=shell_wrapper
-        )
+        server = await create_server(host=args.host, port=args.port, shell=shell_wrapper)
         await server.wait_closed()
 
     asyncio.run(serve())
