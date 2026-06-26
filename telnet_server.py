@@ -258,10 +258,13 @@ def main():
             # while still pending.
             pass
 
-    loop = asyncio.get_event_loop()
-    coro = create_server(host=args.host, port=args.port, shell=shell_wrapper)
-    server = loop.run_until_complete(coro)
-    loop.run_until_complete(server.wait_closed())
+    async def serve():
+        server = await create_server(
+            host=args.host, port=args.port, shell=shell_wrapper
+        )
+        await server.wait_closed()
+
+    asyncio.run(serve())
 
 
 if __name__ == "__main__":
