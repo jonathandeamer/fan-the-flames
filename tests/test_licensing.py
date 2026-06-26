@@ -1,7 +1,8 @@
 from pathlib import Path
 
-SRC = Path("telnet_server.py").read_text()
-README = Path("README.md").read_text()
+ROOT = Path(__file__).resolve().parent.parent
+SRC = (ROOT / "telnet_server.py").read_text()
+README = (ROOT / "README.md").read_text()
 
 
 def test_header_keeps_original_author_and_marks_modification():
