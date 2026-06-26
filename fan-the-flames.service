@@ -1,4 +1,4 @@
-# /etc/systemd/system/ride-the-wave.service
+# /etc/systemd/system/fan-the-flames.service
 
 [Unit]
 Description=Fan the Flames telnet fire splash screen
@@ -7,7 +7,7 @@ Description=Fan the Flames telnet fire splash screen
 Type=simple
 Restart=always
 RestartSec=5
-ExecStart=/var/gopher/ride-the-wave/telnet_server.py --host 0.0.0.0 --port 23
+ExecStart=/opt/fan-the-flames/telnet_server.py --host 0.0.0.0 --port 23
 
 [Install]
 WantedBy=default.target
