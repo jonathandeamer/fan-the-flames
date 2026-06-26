@@ -21,6 +21,7 @@ __version__ = "1.0.0"
 import argparse
 import asyncio
 import logging
+import random
 from functools import lru_cache
 
 from telnetlib3 import create_server, telopt
@@ -60,6 +61,39 @@ def fire_rgb(heat: int) -> tuple[int, int, int]:
 
 FG_PALETTE = [f"\x1b[38;2;{r};{g};{b}m" for r, g, b in (fire_rgb(h) for h in range(256))]
 BG_PALETTE = [f"\x1b[48;2;{r};{g};{b}m" for r, g, b in (fire_rgb(h) for h in range(256))]
+
+
+class FireState:
+    """Per-connection heat grid for the fire simulation."""
+
+    def __init__(self, cols: int, rows: int) -> None:
+        self.cols = cols
+        self.rows = rows
+        self.height = rows * 2
+        self.heat = [0] * (cols * self.height)
+
+
+def step_fire(state: FireState, cooling: int, rng=random) -> None:
+    """Advance the fire one frame: re-heat the bottom row, propagate upward."""
+    cols, height, heat = state.cols, state.height, state.heat
+    if cols == 0 or height == 0:
+        return
+
+    # Hot, shimmering source row along the bottom.
+    base = (height - 1) * cols
+    for x in range(cols):
+        heat[base + x] = 230 + rng.randint(0, 25)
+
+    # Each cell above cools off a copy of the cell below, with horizontal drift.
+    for y in range(height - 2, -1, -1):
+        row = y * cols
+        below = (y + 1) * cols
+        for x in range(cols):
+            src_x = x + rng.randint(-1, 1)
+            src = heat[below + src_x] if 0 <= src_x < cols else 0
+            value = src - rng.randint(0, cooling)
+            heat[row + x] = value if value > 0 else 0
+
 
 FPS = 10
 DURATION = 10
