@@ -31,8 +31,12 @@ continuous-scalar-to-gradient-palette approach.
 
 Keep the single-file structure and reuse the working scaffold.
 
-**Keep as-is:** `parse_args`, `negotiate_telnet_options`, `get_terminal_size`,
-`main` / `shell_wrapper`, and the per-frame loop + `[q]uit` handling in `shell`.
+**Keep as-is:** `negotiate_telnet_options`, `get_terminal_size`, `main` /
+`shell_wrapper`, and the per-frame loop + `[q]uit` handling in `shell`.
+
+**Extend:** `parse_args` gains a `--cooling` argument (and `main` wires it into
+the sim) alongside the existing `--fps` / `--duration`. The rest of `parse_args`
+is unchanged.
 
 **Replace:** `WAVE`, `render_screen`, the `^color` ANSI-cycle trick, and the
 `lru_cache` — a stochastic fire is not periodic, so caching by
@@ -44,9 +48,11 @@ Keep the single-file structure and reuse the working scaffold.
   reallocated on resize.
 - `step_fire(state)` — advances the simulation one frame.
 - `render_fire(state, rows, cols)` — heat grid → truecolor half-block string,
-  with the banner overlaid.
-- `PALETTE` — 256 precomputed truecolor escape strings, black→red→orange→
-  yellow→white.
+  with the banner overlaid at the cell level (see Rendering).
+- `FG_PALETTE` / `BG_PALETTE` — 256 precomputed truecolor escape strings each
+  (`38;2;…m` foreground and `48;2;…m` background) over the same black→red→
+  orange→yellow→white RGB ramp, so both halves of a cell color without per-cell
+  string building.
 
 ## Simulation (`step_fire`)
 
@@ -66,18 +72,24 @@ Doom-style heat-field over a `cols × H` byte grid (`H = rows * 2`).
 
 ## Rendering (`render_fire` + `PALETTE`)
 
-- **`PALETTE`:** 256 precomputed `\x1b[38;2;r;g;bm` strings mapping heat→color on
-  a fixed black→red→orange→yellow→white fire ramp (lavat's palette concept with a
-  fixed ramp).
+- **Palette:** one fixed black→red→orange→yellow→white RGB ramp (256 entries),
+  precomputed into `FG_PALETTE` (`38;2;r;g;bm`) and `BG_PALETTE` (`48;2;r;g;bm`)
+  so a cell's upper and lower halves each index a ready-made escape (lavat's
+  palette concept with a fixed ramp).
 - **Half-blocks:** each terminal cell renders two vertical heat samples as `▀`
-  with fg = upper sample's color, bg = lower sample's color — doubling vertical
+  with fg = `FG_PALETTE[upper]`, bg = `BG_PALETTE[lower]` — doubling vertical
   resolution (lavat.c:223-289).
-- **Run-length color optimization:** emit a new `38;2;…` / `48;2;…` escape only
-  when the color changes from the previous cell. Primary lever for keeping the
-  Pi Zero within framerate (cuts both CPU and bytes).
-- **Banner:** reuse `overlay_banner` (centered, auto-skips when the window is too
-  small) drawn as solid cells over the fire, with **Fan the Flames** text; keep
-  the `[q]uit` footer.
+- **Run-length color optimization:** track the previously emitted foreground and
+  background indices independently, and emit an `FG_PALETTE` / `BG_PALETTE`
+  escape only when its index changes from the previous cell. Primary lever for
+  keeping the Pi Zero within framerate (cuts both CPU and bytes).
+- **Banner:** overlay the banner **into the cell grid before escape generation**,
+  not by string-slicing rendered rows. The existing `overlay_banner` slices by
+  character index and injects `END`/`WATER`, which would miscount ANSI escape
+  bytes as columns on truecolor rows; it is rewritten to mark banner cells
+  (fixed glyph + fixed fg/bg) in the per-cell render path. Stays centered,
+  auto-skips when the window is too small, carries the **Fan the Flames** text,
+  and keeps the `[q]uit` footer.
 
 ### Performance risk & mitigation
 
