@@ -7,7 +7,7 @@
 
 ## About
 
-A Doom-style ASCII fire animation served over telnet, rendered in 24-bit
+An ASCII fire animation served over telnet, rendered in 24-bit
 truecolor with half-block glyphs. Designed to run on a Raspberry Pi Zero and
 viewed from a truecolor terminal such as Ghostty.
 
