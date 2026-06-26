@@ -1,4 +1,4 @@
-# /usr/bin/env python3
+#!/usr/bin/env python3
 """
 An animated telnet fire splash screen ("Fan the Flames").
 
