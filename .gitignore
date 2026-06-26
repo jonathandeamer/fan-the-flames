@@ -3,3 +3,7 @@ venv/
 .DS_Store
 
 .superpowers/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
