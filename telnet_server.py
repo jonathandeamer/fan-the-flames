@@ -15,13 +15,14 @@ gradient palette) is adapted from "lavat" by AngelJumbo
 The telnet server uses asyncio and requires python 3.11+.
 """
 
-__author__ = "Michael Lazar"
-__license__ = "GNU GPL v3"
-__copyright__ = "Michael Lazar"
-__version__ = "2.0.0"
-
+# Copyright (C) Michael Lazar — original "ride-the-wave"
+# Copyright (C) 2026 Jonathan Deamer — "Fan the Flames" fire animation
+# Licensed under the GNU GPL v3; see LICENSE.
+#
 # Modified 2026 by Jonathan Deamer: replaced the wave animation with a fire
 # animation and rebranded the project as "Fan the Flames".
+
+__version__ = "2.0.0"
 
 import argparse
 import asyncio
