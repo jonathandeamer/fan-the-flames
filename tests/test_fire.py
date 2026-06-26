@@ -16,7 +16,7 @@ def test_step_heats_bottom_row_and_stays_in_range():
     random.seed(0)
     state = FireState(cols=8, rows=3)  # height 6
     step_fire(state, cooling=18)
-    bottom = state.heat[(state.height - 1) * state.cols:]
+    bottom = state.heat[(state.height - 1) * state.cols :]
     assert all(230 <= v <= 255 for v in bottom)
     assert all(0 <= v <= 255 for v in state.heat)
 
@@ -37,5 +37,5 @@ def test_flames_cool_toward_the_top():
     for _ in range(30):  # let the fire establish
         step_fire(state, cooling=18)
     top_row_avg = sum(state.heat[: state.cols]) / state.cols
-    bottom_row_avg = sum(state.heat[(state.height - 1) * state.cols:]) / state.cols
+    bottom_row_avg = sum(state.heat[(state.height - 1) * state.cols :]) / state.cols
     assert top_row_avg < bottom_row_avg

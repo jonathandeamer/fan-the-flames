@@ -1,22 +1,27 @@
 # /usr/bin/env python3
 """
-An animated telnet splash screen for mozz.us.
+An animated telnet fire splash screen ("Fan the Flames").
 
-When a connection is established with the server, an ASCII "wave" animation
-is displayed on the screen. After a short period of the time, the connection
-is automatically closed. The text rendering relies on some universal VT-100
-ANSI commands for text coloring.
+When a connection is established, a Doom-style ASCII fire animation is rendered
+in 24-bit truecolor using half-block glyphs, then the connection is closed after
+a short period.
 
-The telnet server uses asyncio and requires python 3.6+.
+This is a modified fork of "ride-the-wave" by Michael Lazar
+(https://github.com/michael-lazar/ride-the-wave), which displayed a scrolling
+wave. The fire rendering technique (half-block 2x vertical resolution and a
+gradient palette) is adapted from "lavat" by AngelJumbo
+(https://github.com/AngelJumbo/lavat, MIT).
 
-ASCII art credited to Joan Stark:
-https://web.archive.org/web/20091028022938/http://www.geocities.com/SoHo/7373/scroll.htm
+The telnet server uses asyncio and requires python 3.11+.
 """
 
 __author__ = "Michael Lazar"
 __license__ = "GNU GPL v3"
 __copyright__ = "Michael Lazar"
-__version__ = "1.0.0"
+__version__ = "2.0.0"
+
+# Modified 2026 by Jonathan Deamer: replaced the wave animation with a fire
+# animation and rebranded the project as "Fan the Flames".
 
 import argparse
 import asyncio
@@ -132,16 +137,16 @@ def render_fire(state: FireState, rows: int, cols: int) -> str:
 
             if x < grid_cols:
                 u = heat[upper * grid_cols + x] if upper < height else 0
-                l = heat[lower * grid_cols + x] if lower < height else 0
+                lo = heat[lower * grid_cols + x] if lower < height else 0
             else:
-                u = l = 0
+                u = lo = 0
 
             if u != last_fg:
                 out.append(FG_PALETTE[u])
                 last_fg = u
-            if l != last_bg:
-                out.append(BG_PALETTE[l])
-                last_bg = l
+            if lo != last_bg:
+                out.append(BG_PALETTE[lo])
+                last_bg = lo
             out.append(HALF_BLOCK)
 
         if r < rows - 1:

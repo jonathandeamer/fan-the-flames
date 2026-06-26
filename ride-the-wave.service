@@ -1,7 +1,7 @@
 # /etc/systemd/system/ride-the-wave.service
 
 [Unit]
-Description=Ride the Wave
+Description=Fan the Flames telnet fire splash screen
 
 [Service]
 Type=simple

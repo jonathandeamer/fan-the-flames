@@ -29,5 +29,6 @@ def test_end_to_end_frame_render():
 
 def test_wave_symbols_are_gone():
     import telnet_server
+
     assert not hasattr(telnet_server, "WAVE")
     assert not hasattr(telnet_server, "render_screen")

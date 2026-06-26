@@ -2,8 +2,8 @@ from telnet_server import BG_PALETTE, FG_PALETTE, fire_rgb
 
 
 def test_ramp_endpoints_and_stops():
-    assert fire_rgb(0) == (0, 0, 0)        # coldest -> black
-    assert fire_rgb(128) == (255, 0, 0)    # mid -> red
+    assert fire_rgb(0) == (0, 0, 0)  # coldest -> black
+    assert fire_rgb(128) == (255, 0, 0)  # mid -> red
     assert fire_rgb(255) == (255, 255, 255)  # hottest -> white
 
 
