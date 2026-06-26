@@ -39,3 +39,13 @@ def test_flames_cool_toward_the_top():
     top_row_avg = sum(state.heat[: state.cols]) / state.cols
     bottom_row_avg = sum(state.heat[(state.height - 1) * state.cols :]) / state.cols
     assert top_row_avg < bottom_row_avg
+
+
+def test_fire_propagates_gradually_not_instantly():
+    random.seed(0)
+    state = FireState(cols=8, rows=10)  # height = 20
+    step_fire(state, cooling=18)
+    # After one frame from a cold start, the fire must not have cascaded up the
+    # whole column. The top half of the grid should still be completely cold.
+    top_half = state.heat[: (state.height // 2) * state.cols]
+    assert set(top_half) == {0}

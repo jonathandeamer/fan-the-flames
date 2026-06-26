@@ -81,8 +81,9 @@ def step_fire(state: FireState, cooling: int, rng=random) -> None:
     for x in range(cols):
         heat[base + x] = 230 + rng.randint(0, 25)
 
-    # Each cell above cools off a copy of the cell below, with horizontal drift.
-    for y in range(height - 2, -1, -1):
+    # Each cell cools off a copy of the cell below (previous frame), with horizontal drift.
+    # Iterate top-to-bottom so each row reads the still-unmodified row beneath it.
+    for y in range(0, height - 1):
         row = y * cols
         below = (y + 1) * cols
         for x in range(cols):
