@@ -160,8 +160,8 @@ def render_fire(state: FireState, rows: int, cols: int) -> str:
 
 
 FPS = 10
-DURATION = 10
-COOLING = 18
+DURATION = 20
+COOLING = 10
 
 
 def parse_args():
