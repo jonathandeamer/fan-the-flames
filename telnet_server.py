@@ -79,10 +79,20 @@ def step_fire(state: FireState, cooling: int, rng=random) -> None:
     if cols == 0 or height == 0:
         return
 
+    # This loop runs once per cell, so on a Pi Zero it dominates the frame
+    # budget. `random.randint` carries heavy per-call overhead; `random()` is a
+    # thin C call, so we draw a float and scale it instead. The arithmetic
+    # below reproduces the exact integer ranges randint produced:
+    #   int(rnd() * 26)          -> 0..25   (was randint(0, 25))
+    #   int(rnd() * 3) - 1       -> -1..1   (was randint(-1, 1))
+    #   int(rnd() * cool_span)   -> 0..cooling (was randint(0, cooling))
+    rnd = rng.random
+    cool_span = cooling + 1
+
     # Hot, shimmering source row along the bottom.
     base = (height - 1) * cols
     for x in range(cols):
-        heat[base + x] = 230 + rng.randint(0, 25)
+        heat[base + x] = 230 + int(rnd() * 26)
 
     # Each cell cools off a copy of the cell below (previous frame), with horizontal drift.
     # Iterate top-to-bottom so each row reads the still-unmodified row beneath it.
@@ -90,9 +100,9 @@ def step_fire(state: FireState, cooling: int, rng=random) -> None:
         row = y * cols
         below = (y + 1) * cols
         for x in range(cols):
-            src_x = x + rng.randint(-1, 1)
+            src_x = x + int(rnd() * 3) - 1
             src = heat[below + src_x] if 0 <= src_x < cols else 0
-            value = src - rng.randint(0, cooling)
+            value = src - int(rnd() * cool_span)
             heat[row + x] = value if value > 0 else 0
 
 
