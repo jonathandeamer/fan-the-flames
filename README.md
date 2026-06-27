@@ -32,8 +32,8 @@ python3 telnet_server.py --host 0.0.0.0 --port 7777
 | --- | --- | --- |
 | `--host` | `127.0.0.1` | Address to bind. Use `0.0.0.0` to accept connections from other machines. |
 | `--port` | `7777` | TCP port to listen on. |
-| `--fps` | `10` | Animation frames per second. Higher is smoother but sends more data each second — keep it modest on a Pi Zero. |
-| `--duration` | `10` | Seconds to run the animation before the server closes the connection. |
-| `--cooling` | `18` | How fast heat fades as it rises. Lower values let flames climb higher; higher values make them shorter and stubbier. |
+| `--fps` | `10` | Animation frames per second. Higher is smoother but sends more data each second — keep it modest on lower-spec machines. |
+| `--duration` | `20` | Seconds to run the animation before the server closes the connection. |
+| `--cooling` | `10` | How fast heat fades as it rises. Lower values let flames climb higher; higher values make them shorter and stubbier. |
 
 Connected clients can press `q` to disconnect early.
