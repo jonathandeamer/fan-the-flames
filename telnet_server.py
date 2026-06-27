@@ -27,6 +27,7 @@ __version__ = "2.0.0"
 import argparse
 import asyncio
 import logging
+import math
 import random
 import time
 
@@ -185,7 +186,17 @@ def parse_args():
     parser.add_argument("--fps", default=FPS, type=float)
     parser.add_argument("--duration", default=DURATION, type=float)
     parser.add_argument("--cooling", default=COOLING, type=int)
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    if args.port < 1 or args.port > 65535:
+        parser.error("port must be between 1 and 65535")
+    if not math.isfinite(args.fps) or args.fps <= 0:
+        parser.error("fps must be finite and greater than 0")
+    if not math.isfinite(args.duration) or args.duration < 0:
+        parser.error("duration must be finite and non-negative")
+    if args.cooling < 0 or args.cooling > 255:
+        parser.error("cooling must be between 0 and 255")
+    return args
 
 
 def get_terminal_size(writer):

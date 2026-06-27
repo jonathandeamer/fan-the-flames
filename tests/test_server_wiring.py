@@ -29,6 +29,29 @@ class _LoopWriter(_FakeWriter):
         return
 
 
+def test_parse_args_validation():
+    import pytest
+
+    invalid_values = [
+        ("--port", "0"),
+        ("--port", "65536"),
+        ("--fps", "0"),
+        ("--fps", "nan"),
+        ("--fps", "inf"),
+        ("--fps", "-inf"),
+        ("--duration", "-2.5"),
+        ("--duration", "nan"),
+        ("--duration", "inf"),
+        ("--duration", "-inf"),
+        ("--cooling", "-1"),
+        ("--cooling", "256"),
+    ]
+    for option, value in invalid_values:
+        with mock.patch.object(sys, "argv", ["telnet_server.py", option, value]):
+            with pytest.raises(SystemExit):
+                parse_args()
+
+
 def test_parse_args_has_cooling_default():
     with mock.patch.object(sys, "argv", ["telnet_server.py"]):
         args = parse_args()
