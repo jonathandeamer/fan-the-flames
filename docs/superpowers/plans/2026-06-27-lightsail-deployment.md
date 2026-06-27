@@ -582,10 +582,10 @@ Expected: JSON `operations[].status == "Succeeded"`.
 Run:
 ```bash
 aws lightsail get-instance-port-states --instance-name Debian-1 --region us-east-1 \
-  --query "portStates[?fromPort==\`23\`]" --output json
+  --query "portStates[?fromPort<=\`23\` && toPort>=\`23\` && protocol=='tcp']" --output json
 dig +short telnet.jonathandeamer.com
 ```
-Expected: a port-state entry for 23 with `"state": "open"`; `dig` eventually prints `34.196.64.138` (allow up to TTL 300s for propagation).
+Expected: an open TCP port-state range containing port 23 (Lightsail may coalesce adjacent rules, such as 22–23); `dig` eventually prints `34.196.64.138` (allow up to TTL 300s for propagation).
 
 ---
 
