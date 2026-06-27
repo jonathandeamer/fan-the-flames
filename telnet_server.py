@@ -217,6 +217,8 @@ def parse_args():
     parser.add_argument("--fps", default=FPS, type=float)
     parser.add_argument("--duration", default=DURATION, type=float)
     parser.add_argument("--cooling", default=COOLING, type=int)
+    parser.add_argument("--max-per-ip", default=MAX_PER_IP, type=int)
+    parser.add_argument("--max-connections", default=MAX_CONNECTIONS, type=int)
     args = parser.parse_args()
 
     if args.port < 1 or args.port > 65535:
@@ -227,6 +229,12 @@ def parse_args():
         parser.error("duration must be finite and non-negative")
     if args.cooling < 0 or args.cooling > 255:
         parser.error("cooling must be between 0 and 255")
+    if args.max_per_ip < 1:
+        parser.error("max-per-ip must be at least 1")
+    if args.max_connections < 1:
+        parser.error("max-connections must be at least 1")
+    if args.max_per_ip > args.max_connections:
+        parser.error("max-per-ip cannot exceed max-connections")
     return args
 
 
@@ -411,6 +419,12 @@ def main():
     global COOLING
     COOLING = args.cooling
     logging.info(f"Cooling {COOLING}")
+
+    global MAX_PER_IP
+    MAX_PER_IP = args.max_per_ip
+    global MAX_CONNECTIONS
+    MAX_CONNECTIONS = args.max_connections
+    logging.info(f"Limits: {MAX_PER_IP}/IP, {MAX_CONNECTIONS} total")
 
     async def shell_wrapper(*arguments):
         try:

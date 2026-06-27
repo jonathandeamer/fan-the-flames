@@ -184,6 +184,42 @@ def test_parse_args_accepts_cooling_override():
     assert args.cooling == 25
 
 
+def test_parse_args_has_connection_cap_defaults():
+    with mock.patch.object(sys, "argv", ["telnet_server.py"]):
+        args = parse_args()
+    assert args.max_per_ip == 2
+    assert args.max_connections == 50
+
+
+def test_parse_args_accepts_connection_cap_overrides():
+    with mock.patch.object(
+        sys, "argv", ["telnet_server.py", "--max-per-ip", "5", "--max-connections", "100"]
+    ):
+        args = parse_args()
+    assert args.max_per_ip == 5
+    assert args.max_connections == 100
+
+
+def test_parse_args_rejects_invalid_connection_caps(capsys):
+    import pytest
+
+    invalid_cases = [
+        (["telnet_server.py", "--max-per-ip", "0"], "max-per-ip must be at least 1"),
+        (
+            ["telnet_server.py", "--max-connections", "0"],
+            "max-connections must be at least 1",
+        ),
+        (
+            ["telnet_server.py", "--max-per-ip", "3", "--max-connections", "2"],
+            "max-per-ip cannot exceed max-connections",
+        ),
+    ]
+    for argv, expected_error in invalid_cases:
+        with mock.patch.object(sys, "argv", argv), pytest.raises(SystemExit):
+            parse_args()
+        assert expected_error in capsys.readouterr().err
+
+
 def test_get_terminal_size_defensive():
     from telnet_server import MAX_COLS, MAX_ROWS, get_terminal_size
 
