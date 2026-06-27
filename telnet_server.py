@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import logging
 import random
+import time
 
 from telnetlib3 import create_server, telopt
 
@@ -222,6 +223,7 @@ async def shell(reader, writer):
     try:
         state = None
         for _frame in range(int(DURATION * FPS)):
+            frame_start = time.monotonic()
             rows, cols = get_terminal_size(writer)
             if state is None or state.rows != rows or state.cols != cols:
                 state = FireState(cols, rows)
@@ -230,8 +232,14 @@ async def shell(reader, writer):
             writer.write(render_fire(state, rows, cols))
             await writer.drain()
 
+            # The input read doubles as frame pacing: wait only the remainder of
+            # the frame period after the time already spent computing this frame,
+            # so we hit the target FPS instead of (compute + 1/FPS). A small
+            # floor keeps input polled -- so 'q' stays responsive -- on hardware
+            # too slow to hit the target rate (where the remainder goes negative).
+            remaining = 1 / FPS - (time.monotonic() - frame_start)
             try:
-                char = await asyncio.wait_for(reader.read(1), timeout=1 / FPS)
+                char = await asyncio.wait_for(reader.read(1), timeout=max(0.001, remaining))
                 if char == "q":
                     break
             except asyncio.TimeoutError:

@@ -19,6 +19,16 @@ class _FakeWriter:
         self.closed = True
 
 
+class _LoopWriter(_FakeWriter):
+    """A writer the shell render loop can actually drive for one frame."""
+
+    def get_extra_info(self, key, default=None):
+        return {"rows": 4, "cols": 4}.get(key, default)
+
+    async def drain(self):
+        return
+
+
 def test_parse_args_has_cooling_default():
     with mock.patch.object(sys, "argv", ["telnet_server.py"]):
         args = parse_args()
@@ -44,6 +54,41 @@ def test_end_to_end_frame_render():
 def test_wave_symbols_are_gone():
     assert not hasattr(telnet_server, "WAVE")
     assert not hasattr(telnet_server, "render_screen")
+
+
+def test_shell_input_wait_subtracts_compute_time():
+    # The per-frame input wait doubles as frame pacing. It should wait only the
+    # remainder of the frame period after the time already spent computing the
+    # frame -- not a full 1/FPS on top of the compute time.
+    async def _noop(writer):
+        return
+
+    reader = mock.Mock()
+
+    captured = {}
+
+    async def fake_wait_for(aw, timeout):
+        captured["timeout"] = timeout
+        aw.close()  # we never await the read; close it to avoid a warning
+        return "q"  # break out after the first frame
+
+    # Frame compute takes 0.05s of a 0.1s period (FPS=10), so the wait that
+    # follows should be the remaining 0.05s. Replace the module's `time` name
+    # with a fake clock so we don't disturb asyncio's own clock.
+    fake_time = mock.Mock()
+    fake_time.monotonic = mock.Mock(side_effect=[0.0, 0.05])
+
+    writer = _LoopWriter()
+    with mock.patch.object(telnet_server, "negotiate_telnet_options", _noop), mock.patch.object(
+        telnet_server, "DURATION", 1
+    ), mock.patch.object(telnet_server, "FPS", 10), mock.patch.object(
+        telnet_server.asyncio, "wait_for", fake_wait_for
+    ), mock.patch.object(
+        telnet_server, "time", fake_time
+    ):
+        asyncio.run(telnet_server.shell(reader=reader, writer=writer))
+
+    assert captured["timeout"] == 0.05
 
 
 def test_shell_hides_cursor_then_restores_it():
