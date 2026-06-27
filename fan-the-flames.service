@@ -6,8 +6,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-WorkingDirectory=/opt/fan-the-flames
-ExecStart=/opt/fan-the-flames/venv/bin/python /opt/fan-the-flames/telnet_server.py --host 0.0.0.0 --port 23
+WorkingDirectory=/srv/fan-the-flames
+ExecStart=/srv/fan-the-flames/venv/bin/python /srv/fan-the-flames/telnet_server.py --host 0.0.0.0 --port 23
 Restart=always
 RestartSec=5
 
