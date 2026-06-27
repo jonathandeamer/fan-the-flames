@@ -9,7 +9,7 @@ a short period.
 This is a modified fork of "ride-the-wave" by Michael Lazar
 (https://github.com/michael-lazar/ride-the-wave), which displayed a scrolling
 wave. The fire rendering technique (half-block 2x vertical resolution and a
-gradient palette) is adapted from "lavat" by AngelJumbo
+gradient palette) is inspired by the technique used in "lavat" by AngelJumbo
 (https://github.com/AngelJumbo/lavat, MIT).
 
 The telnet server uses asyncio and requires python 3.11+.
