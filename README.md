@@ -3,7 +3,7 @@
 <p align="center">An animated telnet fire splash screen.</p>
 <p align="center">Connect with <strong>$ telnet &lt;host&gt; 7777</strong></p>
 
-<p align="center"><img src="demo.gif" alt="Animated ASCII fire rendered in truecolor over telnet" width="760"></p>
+<p align="center"><img src="demo.gif" alt="Animated ASCII fire rendered in truecolor over telnet" width="640"></p>
 
 ## About
 
