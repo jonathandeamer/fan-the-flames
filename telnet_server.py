@@ -174,6 +174,37 @@ def render_fire(state: FireState, rows: int, cols: int) -> str:
 FPS = 10
 DURATION = 20
 COOLING = 10
+MAX_PER_IP = 2
+MAX_CONNECTIONS = 50
+
+# Concurrent-connection accounting for flood protection. asyncio is
+# single-threaded, so these are mutated without locking.
+_active_per_ip: dict[str, int] = {}
+_active_total = 0
+
+
+def acquire_connection(ip: str) -> bool:
+    """Reserve a connection slot for `ip`; return False if a cap is hit."""
+    global _active_total
+    if _active_total >= MAX_CONNECTIONS:
+        return False
+    if _active_per_ip.get(ip, 0) >= MAX_PER_IP:
+        return False
+    _active_per_ip[ip] = _active_per_ip.get(ip, 0) + 1
+    _active_total += 1
+    return True
+
+
+def release_connection(ip: str) -> None:
+    """Release a slot previously reserved with acquire_connection."""
+    global _active_total
+    count = _active_per_ip.get(ip, 0)
+    if count <= 1:
+        _active_per_ip.pop(ip, None)
+    else:
+        _active_per_ip[ip] = count - 1
+    if _active_total > 0:
+        _active_total -= 1
 
 
 def parse_args():
@@ -228,6 +259,14 @@ def get_terminal_size(writer):
         _sanitize_dimension(rows, DEFAULT_ROWS, MAX_ROWS),
         _sanitize_dimension(cols, DEFAULT_COLS, MAX_COLS),
     )
+
+
+def get_peer_ip(connection) -> str:
+    """Best-effort client IP from a writer or transport, or '?' if unknown."""
+    peername = connection.get_extra_info("peername")
+    if peername:
+        return peername[0]
+    return "?"
 
 
 async def negotiate_telnet_options(writer):

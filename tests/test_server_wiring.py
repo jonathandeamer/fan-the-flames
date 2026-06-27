@@ -29,6 +29,64 @@ class _LoopWriter(_FakeWriter):
         return
 
 
+def _reset_conns():
+    telnet_server._active_per_ip.clear()
+    telnet_server._active_total = 0
+
+
+def test_acquire_allows_under_caps():
+    _reset_conns()
+    with mock.patch.object(telnet_server, "MAX_PER_IP", 2), mock.patch.object(
+        telnet_server, "MAX_CONNECTIONS", 50
+    ):
+        assert telnet_server.acquire_connection("1.2.3.4") is True
+        assert telnet_server.acquire_connection("1.2.3.4") is True
+
+
+def test_acquire_rejects_over_per_ip_cap():
+    _reset_conns()
+    with mock.patch.object(telnet_server, "MAX_PER_IP", 2), mock.patch.object(
+        telnet_server, "MAX_CONNECTIONS", 50
+    ):
+        assert telnet_server.acquire_connection("1.2.3.4") is True
+        assert telnet_server.acquire_connection("1.2.3.4") is True
+        assert telnet_server.acquire_connection("1.2.3.4") is False
+        assert telnet_server.acquire_connection("5.6.7.8") is True
+
+
+def test_acquire_rejects_over_global_cap():
+    _reset_conns()
+    with mock.patch.object(telnet_server, "MAX_PER_IP", 99), mock.patch.object(
+        telnet_server, "MAX_CONNECTIONS", 2
+    ):
+        assert telnet_server.acquire_connection("1.1.1.1") is True
+        assert telnet_server.acquire_connection("2.2.2.2") is True
+        assert telnet_server.acquire_connection("3.3.3.3") is False
+
+
+def test_release_frees_a_slot():
+    _reset_conns()
+    with mock.patch.object(telnet_server, "MAX_PER_IP", 1), mock.patch.object(
+        telnet_server, "MAX_CONNECTIONS", 50
+    ):
+        assert telnet_server.acquire_connection("1.2.3.4") is True
+        assert telnet_server.acquire_connection("1.2.3.4") is False
+        telnet_server.release_connection("1.2.3.4")
+        assert telnet_server.acquire_connection("1.2.3.4") is True
+
+
+def test_get_peer_ip_reads_peername():
+    writer = mock.Mock()
+    writer.get_extra_info.return_value = ("203.0.113.7", 51000)
+    assert telnet_server.get_peer_ip(writer) == "203.0.113.7"
+
+
+def test_get_peer_ip_falls_back_when_unknown():
+    writer = mock.Mock()
+    writer.get_extra_info.return_value = None
+    assert telnet_server.get_peer_ip(writer) == "?"
+
+
 def test_parse_args_validation():
     import pytest
 
