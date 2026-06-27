@@ -31,7 +31,7 @@ import math
 import random
 import time
 
-from telnetlib3 import create_server, telopt
+from telnetlib3 import TelnetServer, create_server, telopt
 
 # VT-100 terminal commands
 END = "\x1b[0m"
@@ -269,6 +269,49 @@ def get_peer_ip(connection) -> str:
     return "?"
 
 
+REJECTION_NOTICE = b"Too many connections, please try again shortly.\r\n"
+
+
+class LimitedTelnetServer(TelnetServer):
+    """Admit connections before Telnet negotiation and release slots on close."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._connection_ip = None
+
+    def _release_connection_slot(self):
+        if self._connection_ip is not None:
+            release_connection(self._connection_ip)
+            self._connection_ip = None
+
+    def connection_made(self, transport):
+        ip = get_peer_ip(transport)
+        if not acquire_connection(ip):
+            # No encoding has been negotiated, so write ASCII bytes directly.
+            self._closing = True
+            self._waiter_connected.cancel()
+            try:
+                transport.write(REJECTION_NOTICE)
+            finally:
+                transport.close()
+            return
+
+        self._connection_ip = ip
+        try:
+            super().connection_made(transport)
+        except BaseException:
+            self._release_connection_slot()
+            raise
+
+    def connection_lost(self, exc):
+        if self._connection_ip is None:
+            return
+        try:
+            super().connection_lost(exc)
+        finally:
+            self._release_connection_slot()
+
+
 async def negotiate_telnet_options(writer):
     """
     Negotiate the telnet connection options with the client.
@@ -380,7 +423,12 @@ def main():
             pass
 
     async def serve():
-        server = await create_server(host=args.host, port=args.port, shell=shell_wrapper)
+        server = await create_server(
+            host=args.host,
+            port=args.port,
+            protocol_factory=LimitedTelnetServer,
+            shell=shell_wrapper,
+        )
         await server.wait_closed()
 
     asyncio.run(serve())

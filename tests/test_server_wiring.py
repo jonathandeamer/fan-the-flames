@@ -29,6 +29,24 @@ class _LoopWriter(_FakeWriter):
         return
 
 
+class _FakeTransport:
+    def __init__(self, ip="203.0.113.7"):
+        self.ip = ip
+        self.writes = []
+        self.closed = False
+
+    def get_extra_info(self, key, default=None):
+        if key == "peername":
+            return (self.ip, 51000)
+        return default
+
+    def write(self, data):
+        self.writes.append(data)
+
+    def close(self):
+        self.closed = True
+
+
 def _reset_conns():
     telnet_server._active_per_ip.clear()
     telnet_server._active_total = 0
@@ -85,6 +103,49 @@ def test_get_peer_ip_falls_back_when_unknown():
     writer = mock.Mock()
     writer.get_extra_info.return_value = None
     assert telnet_server.get_peer_ip(writer) == "?"
+
+
+def test_protocol_rejects_before_telnet_negotiation():
+    async def exercise():
+        _reset_conns()
+        transport = _FakeTransport()
+        protocol = telnet_server.LimitedTelnetServer()
+        with mock.patch.object(telnet_server, "MAX_CONNECTIONS", 0), mock.patch.object(
+            telnet_server.TelnetServer, "connection_made"
+        ) as parent_connection_made:
+            protocol.connection_made(transport)
+
+        parent_connection_made.assert_not_called()
+        assert transport.writes == [telnet_server.REJECTION_NOTICE]
+        assert transport.closed
+        assert protocol._waiter_connected.cancelled()
+        assert telnet_server._active_total == 0
+
+    asyncio.run(exercise())
+
+
+def test_protocol_releases_admitted_connection_exactly_once():
+    async def exercise():
+        _reset_conns()
+        transport = _FakeTransport()
+        protocol = telnet_server.LimitedTelnetServer()
+        with mock.patch.object(
+            telnet_server.TelnetServer, "connection_made"
+        ) as parent_connection_made, mock.patch.object(
+            telnet_server.TelnetServer, "connection_lost"
+        ) as parent_connection_lost:
+            protocol.connection_made(transport)
+            parent_connection_made.assert_called_once()
+            assert telnet_server._active_total == 1
+
+            protocol.connection_lost(None)
+            protocol.connection_lost(None)
+
+        parent_connection_lost.assert_called_once()
+        assert telnet_server._active_total == 0
+        assert telnet_server._active_per_ip == {}
+
+    asyncio.run(exercise())
 
 
 def test_parse_args_validation():
