@@ -29,5 +29,17 @@ python3 telnet_server.py --host 0.0.0.0 --port 7777
 | `--fps` | `10` | Animation frames per second. Higher is smoother but sends more data each second — keep it modest on lower-spec machines. |
 | `--duration` | `20` | Seconds to run the animation before the server closes the connection. |
 | `--cooling` | `10` | How fast heat fades as it rises. Lower values let flames climb higher; higher values make them shorter and stubbier. |
+| `--max-per-ip` | `2` | Maximum simultaneous connections from one source IP. |
+| `--max-connections` | `50` | Maximum simultaneous connections across all clients. |
 
 Connected clients can press `q` to disconnect early.
+
+## Deploying
+
+Deploy manually to the configured Lightsail host:
+
+```bash
+./deploy.sh lightsail /srv/fan-the-flames
+```
+
+The public service is available at `telnet.jonathandeamer.com:23`.
