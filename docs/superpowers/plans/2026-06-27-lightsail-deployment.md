@@ -19,7 +19,7 @@
 - **Deployment facts (verbatim):**
   - SSH alias: `lightsail` → `admin@34.196.64.138`, key `~/.ssh/id_ed25519_lightsail`.
   - Lightsail instance name: `Debian-1`; region: `us-east-1`; static IP `34.196.64.138` (`StaticIp-1`, attached).
-  - Box also runs `nex` (`buffetcar` service, ports 80/1900) under `/srv/nex`. Do not disturb it.
+  - Box also runs `nex` (`buffetcar` service on port 1900) under `/srv/nex`. The Lightsail firewall also has port 80 open, but no host process listens there. Do not disturb `buffetcar`.
   - Route 53 hosted zone for `jonathandeamer.com`: `Z07504492U14KTJQU578V`. Existing `nex.jonathandeamer.com` is `A`, TTL 300 → `34.196.64.138`.
   - Lightsail firewall currently opens 22/80/1900 only; **23 is closed**. No OS firewall (iptables INPUT = ACCEPT).
   - Install dir on Lightsail: **`/srv/fan-the-flames`** (matches the `/srv/nex` convention).
@@ -608,9 +608,9 @@ Expected: prints `active`, then `listening on :23`, and ends with `>> Done.`. A 
 
 Run:
 ```bash
-ssh lightsail 'systemctl is-active fan-the-flames buffetcar; ss -ltn | grep -E ":23 |:80 |:1900 "'
+ssh lightsail 'systemctl is-active fan-the-flames buffetcar; ss -ltn | grep -E ":23 |:1900 "'
 ```
-Expected: `active` for both services; listeners on 23, 80, 1900.
+Expected: `active` for both services; listeners on 23 and 1900.
 
 - [ ] **Step 3: End-to-end frame check from this machine (negotiating client)**
 
