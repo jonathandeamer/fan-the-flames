@@ -4,7 +4,7 @@
 
 **Goal:** Publicly serve "Fan the Flames" at `telnet.jonathandeamer.com:23` from the existing AWS Lightsail box, after adding application-level connection-flood protection, with a committed, repeatable manual deploy script (no GitHub Actions).
 
-**Architecture:** Two halves. (1) **Code** — add per-source-IP and global concurrent-connection caps to the single-file asyncio server, enforced in `shell` before the render loop, configured by new CLI flags + module globals (mirroring the existing `FPS`/`DURATION`/`COOLING` pattern). (2) **Ops** — a parameterized `deploy.sh` that rsyncs the source to a host, builds a venv, renders the systemd unit for the target path, and restarts the service; plus one-shot AWS CLI commands to create the Route 53 A record and open the Lightsail firewall. Deploy mirrors the manual rsync-+-`systemctl restart` pattern used by the `nex` project on the same box.
+**Architecture:** Two halves. (1) **Code** — retain the existing NAWS dimension sanitization and bounded frame-input pacing, and add per-source-IP/global concurrent-connection caps in a `TelnetServer` protocol subclass. The subclass admits or rejects each TCP connection in `connection_made`, before Telnet negotiation and before `shell`, with caps configured by new CLI flags + module globals. (2) **Ops** — a parameterized `deploy.sh` that rsyncs the source to a host, builds a venv, renders the systemd unit for the target path, and restarts the service; plus one-shot AWS CLI commands to create the Route 53 A record and open the Lightsail firewall. Deploy mirrors the manual rsync-+-`systemctl restart` pattern used by the `nex` project on the same box.
 
 **Tech Stack:** Python 3.11+, telnetlib3, pytest (dev); bash, OpenSSH, rsync; AWS CLI v2 (Route 53 + Lightsail); systemd.
 
@@ -24,6 +24,7 @@
   - Lightsail firewall currently opens 22/80/1900 only; **23 is closed**. No OS firewall (iptables INPUT = ACCEPT).
   - Install dir on Lightsail: **`/srv/fan-the-flames`** (matches the `/srv/nex` convention).
 - **Connection-limit defaults:** `MAX_PER_IP = 2`, `MAX_CONNECTIONS = 50` (CLI-overridable).
+- **Existing rendering hardening:** preserve `MAX_ROWS = 1000`, `MAX_COLS = 1000`, EOF termination, `MAX_INPUT_READS_PER_FRAME`, residual frame sleeping, and the 1 ms overrun input poll exactly as implemented by commits `7f1f4f6` and `b3b4f33`. This plan must not replace or weaken the current `shell` loop.
 
 ---
 
@@ -32,7 +33,7 @@
 Pure, synchronous accounting helpers plus a peer-IP extractor. No server wiring yet.
 
 **Files:**
-- Modify: `telnet_server.py` (add globals + functions after the `FPS`/`DURATION`/`COOLING` block, around line 175; add `get_peer_ip` near `get_terminal_size`, around line 197)
+- Modify: `telnet_server.py` (add globals + functions after the `FPS`/`DURATION`/`COOLING` block, around line 176; add `get_peer_ip` after `get_terminal_size`, around line 230)
 - Test: `tests/test_server_wiring.py`
 
 **Interfaces:**
@@ -42,7 +43,7 @@ Pure, synchronous accounting helpers plus a peer-IP extractor. No server wiring 
   - `_active_per_ip: dict[str, int]`, `_active_total: int` (module state)
   - `acquire_connection(ip: str) -> bool` — reserves a slot; `False` if a cap is hit.
   - `release_connection(ip: str) -> None` — frees a slot reserved by `acquire_connection`.
-  - `get_peer_ip(writer) -> str` — returns the client IP from `writer.get_extra_info("peername")`, or `"?"`.
+  - `get_peer_ip(connection) -> str` — returns the client IP from a writer or transport exposing `get_extra_info("peername")`, or `"?"`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -151,12 +152,12 @@ def release_connection(ip: str) -> None:
         _active_total -= 1
 ```
 
-Then, immediately after `get_terminal_size` (currently ends line 197):
+Then, immediately after `get_terminal_size` (currently ends around line 230):
 
 ```python
-def get_peer_ip(writer) -> str:
-    """Best-effort client IP from the telnet transport, or '?' if unknown."""
-    peername = writer.get_extra_info("peername")
+def get_peer_ip(connection) -> str:
+    """Best-effort client IP from a writer or transport, or '?' if unknown."""
+    peername = connection.get_extra_info("peername")
     if peername:
         return peername[0]
     return "?"
@@ -177,27 +178,36 @@ git commit -m "feat: add concurrent-connection accounting helpers"
 
 ---
 
-### Task 2: Enforce caps in the shell coroutine
+### Task 2: Enforce caps before Telnet negotiation
 
-Reject over-cap connections with a one-line ASCII notice before the render loop; always release the slot. Also teach the test fakes to report a peername.
+Reject over-cap TCP connections in the protocol's `connection_made` callback, before `telnetlib3` starts its negotiation or waits up to `connect_maxwait`. Do not modify `shell`; its existing terminal-size, EOF, and pacing protections are part of the deployment baseline.
 
 **Files:**
-- Modify: `telnet_server.py` (`shell`, currently lines 216-250)
-- Test: `tests/test_server_wiring.py` (extend `_FakeWriter`; add a rejection test)
+- Modify: `telnet_server.py` (import `TelnetServer`; add `LimitedTelnetServer` after `get_peer_ip`; pass it to `create_server` in `main`)
+- Test: `tests/test_server_wiring.py`
 
 **Interfaces:**
 - Consumes: `get_peer_ip`, `acquire_connection`, `release_connection` (Task 1).
-- Produces: `shell` now acquires a slot first; on rejection it writes `"Too many connections, please try again shortly.\r\n"`, closes, and returns without rendering.
+- Produces:
+  - `REJECTION_NOTICE: bytes` — plain ASCII suitable before encoding negotiation.
+  - `LimitedTelnetServer(TelnetServer)` — reserves a slot before calling `super().connection_made`, rejects immediately when full, and releases exactly once from `connection_lost`.
+  - `main` passes `protocol_factory=LimitedTelnetServer` to `create_server`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-First, extend the existing `_FakeWriter` in `tests/test_server_wiring.py` so it can report a peername (the real writer exposes this; `shell` now reads it). Replace the `_FakeWriter` class body's end by adding a method:
+Add to `tests/test_server_wiring.py`:
 
 ```python
-class _FakeWriter:
-    def __init__(self):
+class _FakeTransport:
+    def __init__(self, ip="203.0.113.7"):
+        self.ip = ip
         self.writes = []
         self.closed = False
+
+    def get_extra_info(self, key, default=None):
+        if key == "peername":
+            return (self.ip, 51000)
+        return default
 
     def write(self, data):
         self.writes.append(data)
@@ -205,101 +215,131 @@ class _FakeWriter:
     def close(self):
         self.closed = True
 
-    def get_extra_info(self, key, default=None):
-        return {"peername": ("203.0.113.7", 51000), "rows": 4, "cols": 4}.get(key, default)
+
+def test_protocol_rejects_before_telnet_negotiation():
+    async def exercise():
+        _reset_conns()
+        transport = _FakeTransport()
+        protocol = telnet_server.LimitedTelnetServer()
+        with mock.patch.object(telnet_server, "MAX_CONNECTIONS", 0), mock.patch.object(
+            telnet_server.TelnetServer, "connection_made"
+        ) as parent_connection_made:
+            protocol.connection_made(transport)
+
+        parent_connection_made.assert_not_called()
+        assert transport.writes == [telnet_server.REJECTION_NOTICE]
+        assert transport.closed
+        assert protocol._waiter_connected.cancelled()
+        assert telnet_server._active_total == 0
+
+    asyncio.run(exercise())
+
+
+def test_protocol_releases_admitted_connection_exactly_once():
+    async def exercise():
+        _reset_conns()
+        transport = _FakeTransport()
+        protocol = telnet_server.LimitedTelnetServer()
+        with mock.patch.object(
+            telnet_server.TelnetServer, "connection_made"
+        ) as parent_connection_made, mock.patch.object(
+            telnet_server.TelnetServer, "connection_lost"
+        ) as parent_connection_lost:
+            protocol.connection_made(transport)
+            parent_connection_made.assert_called_once()
+            assert telnet_server._active_total == 1
+
+            protocol.connection_lost(None)
+            protocol.connection_lost(None)
+
+        parent_connection_lost.assert_called_once()
+        assert telnet_server._active_total == 0
+        assert telnet_server._active_per_ip == {}
+
+    asyncio.run(exercise())
 ```
 
-(Leave `_LoopWriter` as-is; it inherits the new `get_extra_info` and overrides nothing it needs.)
+- [ ] **Step 2: Run tests to verify they fail**
 
-Then add the rejection test:
-
-```python
-def test_shell_rejects_when_over_capacity():
-    async def _noop(writer):
-        return
-
-    _reset_conns()
-    writer = _FakeWriter()
-    # Pre-fill the global cap so this connection is refused.
-    with mock.patch.object(telnet_server, "MAX_CONNECTIONS", 0), mock.patch.object(
-        telnet_server, "negotiate_telnet_options", _noop
-    ):
-        asyncio.run(telnet_server.shell(reader=None, writer=writer))
-
-    output = "".join(writer.writes)
-    assert "Too many connections" in output
-    assert telnet_server.HIDE_CURSOR not in output  # never started the animation
-    assert writer.closed
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `venv/bin/python -m pytest tests/test_server_wiring.py::test_shell_rejects_when_over_capacity -v`
-Expected: FAIL — current `shell` ignores caps, so it writes `HIDE_CURSOR` (and, with `reader=None`, would error in the loop) instead of the rejection notice.
+Run: `venv/bin/python -m pytest tests/test_server_wiring.py -k "protocol_rejects or protocol_releases" -v`
+Expected: FAIL with `AttributeError: module 'telnet_server' has no attribute 'LimitedTelnetServer'`.
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Replace the body of `shell` (lines 216-250) with:
+Change the telnetlib3 import in `telnet_server.py`:
 
 ```python
-async def shell(reader, writer):
-    """
-    A coroutine that's invoked after a new connection has been established.
-    """
-    ip = get_peer_ip(writer)
-    if not acquire_connection(ip):
-        # ASCII only: an over-capacity client may not have negotiated UTF-8.
-        writer.write("Too many connections, please try again shortly.\r\n")
-        writer.close()
-        return
+from telnetlib3 import TelnetServer, create_server, telopt
+```
 
-    try:
-        await negotiate_telnet_options(writer)
+Immediately after `get_peer_ip`, add:
 
-        writer.write(CLEAR + HIDE_CURSOR)
+```python
+REJECTION_NOTICE = b"Too many connections, please try again shortly.\r\n"
+
+
+class LimitedTelnetServer(TelnetServer):
+    """Admit connections before Telnet negotiation and release slots on close."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._connection_ip = None
+
+    def _release_connection_slot(self):
+        if self._connection_ip is not None:
+            release_connection(self._connection_ip)
+            self._connection_ip = None
+
+    def connection_made(self, transport):
+        ip = get_peer_ip(transport)
+        if not acquire_connection(ip):
+            # No encoding has been negotiated, so write ASCII bytes directly.
+            self._closing = True
+            self._waiter_connected.cancel()
+            try:
+                transport.write(REJECTION_NOTICE)
+            finally:
+                transport.close()
+            return
+
+        self._connection_ip = ip
         try:
-            state = None
-            for _frame in range(int(DURATION * FPS)):
-                frame_start = time.monotonic()
-                rows, cols = get_terminal_size(writer)
-                if state is None or state.rows != rows or state.cols != cols:
-                    state = FireState(cols, rows)
+            super().connection_made(transport)
+        except BaseException:
+            self._release_connection_slot()
+            raise
 
-                step_fire(state, COOLING)
-                writer.write(render_fire(state, rows, cols))
-                await writer.drain()
-
-                # The input read doubles as frame pacing: wait only the remainder
-                # of the frame period after the time spent computing this frame, so
-                # we hit the target FPS instead of (compute + 1/FPS). A small floor
-                # keeps input polled -- so 'q' stays responsive -- on hardware too
-                # slow to hit the target rate (where the remainder goes negative).
-                remaining = 1 / FPS - (time.monotonic() - frame_start)
-                try:
-                    char = await asyncio.wait_for(reader.read(1), timeout=max(0.001, remaining))
-                    if char == "q":
-                        break
-                except asyncio.TimeoutError:
-                    pass
+    def connection_lost(self, exc):
+        if self._connection_ip is None:
+            return
+        try:
+            super().connection_lost(exc)
         finally:
-            # Restore the client's cursor even if they drop the connection mid-frame.
-            writer.write(SHOW_CURSOR)
-            writer.close()
-    finally:
-        release_connection(ip)
+            self._release_connection_slot()
+```
+
+Finally, preserve the existing `shell_wrapper` and pass the protocol subclass in `main`:
+
+```python
+        server = await create_server(
+            host=args.host,
+            port=args.port,
+            protocol_factory=LimitedTelnetServer,
+            shell=shell_wrapper,
+        )
 ```
 
 - [ ] **Step 4: Run the full suite to verify it passes**
 
 Run: `venv/bin/python -m pytest -q`
-Expected: PASS (all prior tests + the new one). In particular `test_shell_hides_cursor_then_restores_it` still passes (its `_FakeWriter` now has `get_extra_info`, `acquire_connection` succeeds, loop is skipped because `DURATION=0`, slot is released).
+Expected: PASS. In particular, the existing terminal-size, EOF, buffered-input pacing, bounded-read, and cursor-cleanup tests must remain unchanged and pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 venv/bin/python -m pyflakes telnet_server.py && venv/bin/python -m flake8 --config=setup.cfg telnet_server.py
 git add telnet_server.py tests/test_server_wiring.py
-git commit -m "feat: reject connections over per-IP/global caps"
+git commit -m "feat: reject connections before telnet negotiation"
 ```
 
 ---
@@ -309,7 +349,7 @@ git commit -m "feat: reject connections over per-IP/global caps"
 Expose `--max-per-ip` / `--max-connections`, wired into `main` like the other globals.
 
 **Files:**
-- Modify: `telnet_server.py` (`parse_args` lines 182-188; `main` after the `COOLING` block, around line 272)
+- Modify: `telnet_server.py` (`parse_args`, currently lines 179-199; `main` after the `COOLING` block, currently around line 331)
 - Test: `tests/test_server_wiring.py`
 
 **Interfaces:**
@@ -333,6 +373,19 @@ def test_parse_args_accepts_connection_cap_overrides():
         args = parse_args()
     assert args.max_per_ip == 5
     assert args.max_connections == 100
+
+
+def test_parse_args_rejects_invalid_connection_caps():
+    import pytest
+
+    invalid_argv = [
+        ["telnet_server.py", "--max-per-ip", "0"],
+        ["telnet_server.py", "--max-connections", "0"],
+        ["telnet_server.py", "--max-per-ip", "3", "--max-connections", "2"],
+    ]
+    for argv in invalid_argv:
+        with mock.patch.object(sys, "argv", argv), pytest.raises(SystemExit):
+            parse_args()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -342,14 +395,25 @@ Expected: FAIL with `AttributeError: 'Namespace' object has no attribute 'max_pe
 
 - [ ] **Step 3: Write the minimal implementation**
 
-In `parse_args`, add before `return parser.parse_args()`:
+In `parse_args`, add these arguments before the existing `args = parser.parse_args()` call:
 
 ```python
     parser.add_argument("--max-per-ip", default=MAX_PER_IP, type=int)
     parser.add_argument("--max-connections", default=MAX_CONNECTIONS, type=int)
 ```
 
-In `main`, after the `COOLING` block (after line 272):
+After the existing cooling validation, add:
+
+```python
+    if args.max_per_ip < 1:
+        parser.error("max-per-ip must be at least 1")
+    if args.max_connections < 1:
+        parser.error("max-connections must be at least 1")
+    if args.max_per_ip > args.max_connections:
+        parser.error("max-per-ip cannot exceed max-connections")
+```
+
+In `main`, after the `COOLING` block (currently around line 331):
 
 ```python
     global MAX_PER_IP
@@ -462,7 +526,7 @@ ssh "$HOST" "sudo install -m 644 /tmp/${UNIT} /etc/systemd/system/${UNIT} && rm 
 ssh "$HOST" "cd '$DIR' && python3 -m venv venv && ./venv/bin/pip install --quiet --upgrade pip && ./venv/bin/pip install --quiet -r requirements.txt"
 
 # 5. Enable + restart, then verify.
-ssh "$HOST" "sudo systemctl daemon-reload && sudo systemctl enable --now ${UNIT} && sudo systemctl restart ${UNIT} && sleep 3 && systemctl is-active ${UNIT} && (ss -ltn | grep -E ':23 ' || echo 'WARNING: not listening on :23')"
+ssh "$HOST" "sudo systemctl daemon-reload && sudo systemctl enable --now ${UNIT} && sudo systemctl restart ${UNIT} && sleep 3 && systemctl is-active ${UNIT} && if ss -ltn | grep -Eq ':23 '; then echo 'listening on :23'; else echo 'ERROR: not listening on :23' >&2; exit 1; fi"
 
 echo ">> Done."
 ```
@@ -509,7 +573,7 @@ Expected: JSON with `"Status": "PENDING"`.
 Run:
 ```bash
 aws lightsail open-instance-public-ports --instance-name Debian-1 --region us-east-1 \
-  --port-info fromPort=23,toPort=23,protocol=TCP
+  --port-info fromPort=23,toPort=23,protocol=tcp
 ```
 Expected: JSON `operations[].status == "Succeeded"`.
 
@@ -538,7 +602,7 @@ Run the script against the public box and confirm the animation streams to a rea
 - [ ] **Step 1: Deploy**
 
 Run: `./deploy.sh lightsail /srv/fan-the-flames`
-Expected: ends with `active` and no `WARNING: not listening on :23`.
+Expected: prints `active`, then `listening on :23`, and ends with `>> Done.`. A missing listener exits nonzero before the final message.
 
 - [ ] **Step 2: Confirm the service and that nex is undisturbed**
 
@@ -554,11 +618,31 @@ Run:
 ```bash
 venv/bin/python - <<'PY'
 import asyncio, telnetlib3
+
+async def read_until_markers(reader, markers, timeout):
+    async def collect():
+        data = ""
+        while not all(marker in data for marker in markers):
+            chunk = await reader.read(4096)
+            if not chunk:
+                break
+            data += chunk
+        return data
+
+    data = await asyncio.wait_for(collect(), timeout=timeout)
+    missing = [repr(marker) for marker in markers if marker not in data]
+    if missing:
+        raise RuntimeError(f"connection closed before markers arrived: {missing}")
+    return data
+
 async def main():
     reader, writer = await telnetlib3.open_connection("telnet.jonathandeamer.com", 23, encoding="utf-8")
-    data = await asyncio.wait_for(reader.read(4096), timeout=5)
-    writer.close()
+    try:
+        data = await read_until_markers(reader, ("\x1b[0;0H", "▀"), timeout=5)
+    finally:
+        writer.close()
     print("frame-home seen:", "\x1b[0;0H" in data, "| half-blocks:", "▀" in data)
+
 asyncio.run(main())
 PY
 ```
@@ -566,25 +650,53 @@ Expected: `frame-home seen: True | half-blocks: True`. (If DNS hasn't propagated
 
 - [ ] **Step 4: Verify the per-IP cap rejects a flood**
 
-Run (opens 3 simultaneous connections from one IP; with `MAX_PER_IP=2` the 3rd must be refused):
+Run (opens three raw TCP connections from one IP and deliberately does not answer Telnet negotiation; with `MAX_PER_IP=2`, the third must be refused immediately while the first two remain pending):
 ```bash
 venv/bin/python - <<'PY'
-import asyncio, telnetlib3
+import asyncio
+
 HOST = "telnet.jonathandeamer.com"
-async def grab():
-    reader, writer = await telnetlib3.open_connection(HOST, 23, encoding="utf-8")
-    data = await asyncio.wait_for(reader.read(256), timeout=5)
+
+REJECTION = b"Too many connections, please try again shortly.\r\n"
+
+async def collect_until_rejected(reader, timeout=2):
+    data = b""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while REJECTION not in data:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
+        try:
+            chunk = await asyncio.wait_for(reader.read(256), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if not chunk:
+            break
+        data += chunk
     return data
+
 async def main():
-    results = await asyncio.gather(*[grab() for _ in range(3)], return_exceptions=True)
-    refused = sum("Too many connections" in r for r in results if isinstance(r, str))
-    print("refused:", refused)
-    for w in []:
-        pass
+    connections = await asyncio.gather(
+        *(asyncio.open_connection(HOST, 23) for _ in range(3))
+    )
+    try:
+        payloads = await asyncio.gather(
+            *(collect_until_rejected(reader) for reader, _writer in connections)
+        )
+        refused = sum(REJECTION in payload for payload in payloads)
+        if refused != 1:
+            raise RuntimeError(f"expected exactly one refusal, got {refused}")
+        print("refused:", refused)
+    finally:
+        for _reader, writer in connections:
+            writer.close()
+        await asyncio.gather(*(writer.wait_closed() for _reader, writer in connections))
+
 asyncio.run(main())
 PY
 ```
-Expected: `refused: 1` (two animations, one rejection notice).
+Expected: `refused: 1`. This also verifies that pending pre-negotiation connections consume admission slots.
 
 - [ ] **Step 5: Final commit (runbook note)**
 
@@ -599,7 +711,8 @@ git commit -m "docs: document Lightsail deploy and telnet.jonathandeamer.com"
 ## Self-Review
 
 **Spec coverage** (against the agreed plan):
-- Hardening before exposure → Tasks 1-3 (caps + CLI), enforced before the firewall/DNS open in Tasks 6-7. ✓
+- Rendering hardening before exposure → existing NAWS sanitization, EOF handling, bounded reads, and residual frame pacing are immutable baseline constraints and remain covered by the existing server-wiring tests. ✓
+- Connection hardening before exposure → Tasks 1-3 (registry + pre-negotiation protocol admission + CLI), completed before the firewall/DNS open in Tasks 6-7. ✓
 - `/srv/fan-the-flames` install path → Task 4 + `deploy.sh` rendering. ✓
 - Committed `deploy.sh` (manual, no Actions) → Task 5. ✓
 - Subdomain via AWS CLI → Task 6 Step 1. ✓
@@ -607,11 +720,12 @@ git commit -m "docs: document Lightsail deploy and telnet.jonathandeamer.com"
 - Coexist with nex → Task 7 Step 2 verifies both. ✓
 - Connection-limit defaults 2/50 → Global Constraints + Tasks 1/3. ✓
 
-**Placeholder scan:** no TBD/"handle edge cases"/"similar to Task N"; every code step shows code; every command shows expected output. ✓
+**Placeholder scan:** complete; every code step shows code and every command shows expected output. ✓
 
-**Type consistency:** `acquire_connection(ip: str) -> bool`, `release_connection(ip: str) -> None`, `get_peer_ip(writer) -> str`, globals `MAX_PER_IP`/`MAX_CONNECTIONS`, state `_active_per_ip`/`_active_total`, args `.max_per_ip`/`.max_connections` — used identically across Tasks 1-3. ✓
+**Type consistency:** `acquire_connection(ip: str) -> bool`, `release_connection(ip: str) -> None`, `get_peer_ip(connection) -> str`, `LimitedTelnetServer`, globals `MAX_PER_IP`/`MAX_CONNECTIONS`, state `_active_per_ip`/`_active_total`, and args `.max_per_ip`/`.max_connections` are used identically across Tasks 1-3. ✓
 
 **Notes / risks:**
-- Telnet on 23 is unauthenticated by design; caps blunt floods but do not authenticate. Acceptable for a public splash screen.
+- Telnet on 23 is unauthenticated by design; pre-negotiation caps bound admitted sockets but do not authenticate or replace host-level volumetric DDoS protection. Acceptable for a public splash screen.
+- `MAX_ROWS = 1000` and `MAX_COLS = 1000` are intentionally preserved from commit `7f1f4f6`; changing those last-hour hardening commits is outside this plan. An admitted client at both maxima can still force a two-million-cell heat grid and substantial per-frame CPU/output, which is an explicitly accepted residual risk.
 - `deploy.sh` and the AWS/verification steps are ops actions verified by running them, not unit tests (per TDD's config/script exception).
 - DNS propagation up to 300s (TTL); Task 7 Step 3 offers the raw-IP fallback.
