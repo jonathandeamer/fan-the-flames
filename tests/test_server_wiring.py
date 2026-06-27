@@ -65,6 +65,35 @@ def test_parse_args_accepts_cooling_override():
     assert args.cooling == 25
 
 
+def test_get_terminal_size_defensive():
+    from telnet_server import MAX_COLS, MAX_ROWS, get_terminal_size
+
+    writer = mock.Mock()
+    # Malformed / missing sizes (non-integer types)
+    writer.get_extra_info.side_effect = lambda key, default: {"rows": "abc", "cols": None}.get(
+        key, default
+    )
+    rows, cols = get_terminal_size(writer)
+    assert rows == 24
+    assert cols == 80
+
+    # Zero means unspecified; malformed negative values also use defaults.
+    writer.get_extra_info.side_effect = lambda key, default: {"rows": 0, "cols": -10}.get(
+        key, default
+    )
+    rows, cols = get_terminal_size(writer)
+    assert rows == 24
+    assert cols == 80
+
+    # NAWS fields are 16-bit and untrusted, so cap oversized dimensions.
+    writer.get_extra_info.side_effect = lambda key, default: {"rows": 65535, "cols": 65535}.get(
+        key, default
+    )
+    rows, cols = get_terminal_size(writer)
+    assert rows == MAX_ROWS
+    assert cols == MAX_COLS
+
+
 def test_end_to_end_frame_render():
     random.seed(0)
     state = FireState(cols=40, rows=12)

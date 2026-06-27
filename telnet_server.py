@@ -199,13 +199,35 @@ def parse_args():
     return args
 
 
+DEFAULT_ROWS = 24
+DEFAULT_COLS = 80
+# Sanity bound only -- far above any real full-screen terminal, just low
+# enough to reject the absurd 16-bit NAWS maximum (65535) before it allocates
+# a multi-gigabyte heat grid.
+MAX_ROWS = 1000
+MAX_COLS = 1000
+
+
+def _sanitize_dimension(value, default, maximum):
+    try:
+        value = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if value <= 0:
+        return default
+    return min(value, maximum)
+
+
 def get_terminal_size(writer):
     """
     Grab the most recent terminal size reported by the client via telnet NAWS.
     """
-    rows = writer.get_extra_info("rows", 24)
-    cols = writer.get_extra_info("cols", 80)
-    return rows, cols
+    rows = writer.get_extra_info("rows", DEFAULT_ROWS)
+    cols = writer.get_extra_info("cols", DEFAULT_COLS)
+    return (
+        _sanitize_dimension(rows, DEFAULT_ROWS, MAX_ROWS),
+        _sanitize_dimension(cols, DEFAULT_COLS, MAX_COLS),
+    )
 
 
 async def negotiate_telnet_options(writer):
