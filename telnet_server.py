@@ -246,6 +246,10 @@ async def negotiate_telnet_options(writer):
     await asyncio.sleep(0.5)
 
 
+MAX_INPUT_READS_PER_FRAME = 16
+MIN_INPUT_POLL_TIMEOUT = 0.001
+
+
 async def shell(reader, writer):
     """
     A coroutine that's invoked after a new connection has been established.
@@ -264,18 +268,38 @@ async def shell(reader, writer):
             writer.write(render_fire(state, rows, cols))
             await writer.drain()
 
-            # The input read doubles as frame pacing: wait only the remainder of
-            # the frame period after the time already spent computing this frame,
-            # so we hit the target FPS instead of (compute + 1/FPS). A small
-            # floor keeps input polled -- so 'q' stays responsive -- on hardware
-            # too slow to hit the target rate (where the remainder goes negative).
-            remaining = 1 / FPS - (time.monotonic() - frame_start)
-            try:
-                char = await asyncio.wait_for(reader.read(1), timeout=max(0.001, remaining))
-                if char == "q":
-                    break
-            except asyncio.TimeoutError:
-                pass
+            # Drain pending input as frame pacing. We poll for the remainder of
+            # the frame period after the time spent computing this frame, so we
+            # hit the target FPS instead of (compute + 1/FPS). A flooding client
+            # is bounded to MAX_INPUT_READS_PER_FRAME immediate reads per frame;
+            # any leftover frame time is then slept off explicitly. On hardware
+            # too slow to hit the target rate (remainder negative) we still do
+            # one short poll so 'q' stays responsive. An empty read means EOF, so
+            # we stop rather than busy-spinning through the rest of the frames.
+            should_exit = False
+            if reader is not None:
+                for read_index in range(MAX_INPUT_READS_PER_FRAME):
+                    elapsed = time.monotonic() - frame_start
+                    delay = (1.0 / FPS) - elapsed
+                    if delay <= 0:
+                        if read_index > 0:
+                            break
+                        delay = MIN_INPUT_POLL_TIMEOUT
+                    try:
+                        char = await asyncio.wait_for(reader.read(1), timeout=delay)
+                        if not char or char == "q":
+                            should_exit = True
+                            break
+                    except asyncio.TimeoutError:
+                        break
+
+            if should_exit:
+                break
+
+            elapsed = time.monotonic() - frame_start
+            delay = (1.0 / FPS) - elapsed
+            if delay > 0:
+                await asyncio.sleep(delay)
     finally:
         # Restore the client's cursor even if they drop the connection mid-frame.
         try:

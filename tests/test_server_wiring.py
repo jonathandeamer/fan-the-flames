@@ -157,6 +157,95 @@ def test_shell_negotiation_failure_closes_writer():
     assert writer.closed
 
 
+def test_shell_eof_terminates_loop():
+    class _FakeReader:
+        async def read(self, n):
+            return ""  # EOF immediately
+
+    writer = _LoopWriter()
+
+    async def _noop(writer):
+        pass
+
+    with mock.patch.object(telnet_server, "negotiate_telnet_options", _noop), mock.patch.object(
+        telnet_server, "DURATION", 10.0
+    ), mock.patch.object(telnet_server, "FPS", 10):
+        asyncio.run(telnet_server.shell(reader=_FakeReader(), writer=writer))
+
+    # The simulation should have terminated immediately on EOF, having written
+    # very few outputs.
+    assert len(writer.writes) < 5
+
+
+def test_shell_paces_next_frame_after_input():
+    class _FakeReader:
+        def __init__(self):
+            self.calls = 0
+
+        async def read(self, n):
+            self.calls += 1
+            if self.calls == 1:
+                return "a"
+            if self.calls == 2:
+                # Force the first frame to wait for its remaining time.
+                await asyncio.Event().wait()
+            return ""  # EOF on the next frame
+
+    class _TimedWriter(_LoopWriter):
+        def __init__(self):
+            super().__init__()
+            self.frame_times = []
+
+        def write(self, data):
+            super().write(data)
+            if data.startswith(telnet_server.RESET):
+                self.frame_times.append(asyncio.get_running_loop().time())
+
+    writer = _TimedWriter()
+
+    async def _noop(writer):
+        pass
+
+    with mock.patch.object(telnet_server, "negotiate_telnet_options", _noop), mock.patch.object(
+        telnet_server, "DURATION", 0.2
+    ), mock.patch.object(telnet_server, "FPS", 10):
+        asyncio.run(telnet_server.shell(reader=_FakeReader(), writer=writer))
+
+    assert len(writer.frame_times) == 2
+    assert writer.frame_times[1] - writer.frame_times[0] >= 0.08
+
+
+def test_shell_bounds_input_reads_per_frame():
+    class _FloodReader:
+        def __init__(self):
+            self.calls = 0
+
+        async def read(self, n):
+            self.calls += 1
+            return "a"
+
+    reader = _FloodReader()
+    writer = _LoopWriter()
+    sleep_delays = []
+
+    async def _noop(writer):
+        pass
+
+    async def _record_sleep(delay):
+        sleep_delays.append(delay)
+
+    with mock.patch.object(telnet_server, "negotiate_telnet_options", _noop), mock.patch.object(
+        telnet_server, "DURATION", 0.1
+    ), mock.patch.object(telnet_server, "FPS", 10), mock.patch.object(
+        asyncio, "sleep", _record_sleep
+    ):
+        asyncio.run(telnet_server.shell(reader=reader, writer=writer))
+
+    assert 0 < reader.calls <= telnet_server.MAX_INPUT_READS_PER_FRAME
+    assert sleep_delays
+    assert 0 < sleep_delays[0] <= 0.1
+
+
 def test_shell_hides_cursor_then_restores_it():
     async def _noop(writer):
         return
