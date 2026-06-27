@@ -1,15 +1,9 @@
 <h1 align="center">Fan the Flames</h1>
 
 <p align="center">An animated telnet fire splash screen.</p>
-<p align="center">Connect with <strong>$ telnet &lt;host&gt; 7777</strong></p>
+<p align="center">Connect with <strong>$ telnet telnet.jonathandeamer.com</strong></p>
 
 <p align="center"><img src="demo.gif" alt="Animated ASCII fire rendered in truecolor over telnet" width="640"></p>
-
-## About
-
-An ASCII fire animation served over telnet, rendered in 24-bit
-truecolor with half-block glyphs. Designed to run on a Raspberry Pi Zero and
-viewed from a truecolor terminal such as Ghostty.
 
 ## Credits & License
 
@@ -19,7 +13,7 @@ that GPL-3.0 project, **Fan the Flames is also licensed under GPL-3.0** (see
 `LICENSE`).
 
 The fire rendering technique — half-block glyphs for 2x vertical resolution and
-a continuous heat-to-gradient palette — is adapted from
+a continuous heat-to-gradient palette — is inspired by the technique used in
 [lavat](https://github.com/AngelJumbo/lavat) by AngelJumbo (MIT).
 
 ## Usage
