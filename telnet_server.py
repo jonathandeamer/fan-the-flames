@@ -250,10 +250,9 @@ async def shell(reader, writer):
     """
     A coroutine that's invoked after a new connection has been established.
     """
-    await negotiate_telnet_options(writer)
-
-    writer.write(CLEAR + HIDE_CURSOR)
     try:
+        await negotiate_telnet_options(writer)
+        writer.write(CLEAR + HIDE_CURSOR)
         state = None
         for _frame in range(int(DURATION * FPS)):
             frame_start = time.monotonic()
@@ -279,7 +278,10 @@ async def shell(reader, writer):
                 pass
     finally:
         # Restore the client's cursor even if they drop the connection mid-frame.
-        writer.write(SHOW_CURSOR)
+        try:
+            writer.write(SHOW_CURSOR)
+        except ConnectionError:
+            pass
         writer.close()
 
 

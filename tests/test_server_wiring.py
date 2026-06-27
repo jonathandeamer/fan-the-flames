@@ -143,6 +143,20 @@ def test_shell_input_wait_subtracts_compute_time():
     assert captured["timeout"] == 0.05
 
 
+def test_shell_negotiation_failure_closes_writer():
+    async def _fail(writer):
+        raise ConnectionError("Negotiation dropped")
+
+    writer = _FakeWriter()
+    with mock.patch.object(telnet_server, "negotiate_telnet_options", _fail):
+        try:
+            asyncio.run(telnet_server.shell(reader=None, writer=writer))
+        except ConnectionError:
+            pass
+
+    assert writer.closed
+
+
 def test_shell_hides_cursor_then_restores_it():
     async def _noop(writer):
         return
